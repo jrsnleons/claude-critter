@@ -1,0 +1,6 @@
+{
+  "name": "critter-hud",
+  "version": "0.3.0",
+  "description": "A pixel critter above the prompt that acts out what Claude and each subagent is doing, with context, limits, cost and a live agent list.",
+  "types": "./types/index.d.ts"
+}

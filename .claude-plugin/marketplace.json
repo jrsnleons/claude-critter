@@ -1,0 +1,5 @@
+{
+  "name": "claude-critter",
+  "owner": { "name": "jrsnleons" },
+  "plugins": [{ "name": "critter-hud", "source": "./" }]
+}
