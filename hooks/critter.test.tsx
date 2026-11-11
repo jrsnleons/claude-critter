@@ -6,6 +6,51 @@ const BAND = {
   props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 12, bodyColumns: 80, scroll: { offset: 0, bodyRows: 12 }, view: {} },
 } as const
 
+const PANE = {
+  plugin: 'critter-hud',
+  component: 'Pane',
+  requestId: 'critter',
+  props: {
+    title: 'Critter',
+    isFocused: false,
+    bodyColumns: 40,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 30 },
+    view: {},
+  },
+} as const
+
+test('on desktop the critter lives in a transparent pane, not the band', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const opened: unknown[] = []
+  on('command.register', () => ({ value: { command: 'critter' } }))
+  on('ui.open', (_, e) => {
+    opened.push(e)
+    return { value: { isPlaced: true } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: {} }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: '/src/app.ts' })
+  expect(opened).toEqual([
+    expect.objectContaining({ id: 'critter', backgroundColor: 'transparent' }),
+  ])
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await pane.find({ type: 'Svg' }))?.props.alt).toBe('Critter: Reading app.ts')
+  await pane.unmount()
+
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await band.find({ type: 'Svg' })).toBeUndefined()
+  await band.unmount()
+})
+
 test('the critter acts out a Read, on desktop and terminal', async ($, on) => {
   mock.clock(on)
   mock.store(on)

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Action, AgentView, Main, Mood, PlanItem, Turn, Usage } from '../types'
-import { cut, face, modelColor, modelName, scene } from './critter'
+import { cut, face, modelColor, modelName, scene, sceneTall } from './critter'
 
 const main = atom({ plugin: 'critter-hud', key: 'main' } as const, {
   action: 'idle',
@@ -27,6 +27,9 @@ const isHidden = atom({ plugin: 'critter-hud', key: 'isHidden' } as const, false
 const plan = atom({ plugin: 'critter-hud', key: 'plan' } as const, [] as PlanItem[], {
   shape: 'plan-1',
 })
+const paneOpen = atom({ plugin: 'critter-hud', key: 'paneOpen' } as const, false)
+
+const PANE = 'critter'
 
 const MOOD_KEY = 'mood'
 const TRANSIENT: Action[] = ['done', 'error', 'spawn']
@@ -193,8 +196,54 @@ async function onTick($: EngineInterface) {
   $.ui.status(statusText(await read($, main), running, await read($, usage)))
 }
 
+/** Everything the band and the pane draw, read from state. */
+async function hudModel($: EngineInterface) {
+  const m = await read($, main)
+  const list = await read($, agents)
+  const u = await read($, usage)
+  const t = await read($, turn)
+  const md = await read($, mood)
+  const items = await read($, plan)
+  const now = Math.max(await read($, tick), m.at)
+  const planInfo =
+    items.length > 0
+      ? {
+          done: items.filter(it => it.status === 'completed').length,
+          total: items.length,
+          current: items.find(it => it.status === 'in_progress')?.content ?? '',
+        }
+      : undefined
+
+  const running = list.filter(a => a.endedAt === undefined)
+  const recent = list.filter(a => a.endedAt !== undefined && now - a.endedAt < KEEP_FINISHED_MS)
+  const shown = [...running, ...recent]
+  const finished = list.filter(a => a.endedAt !== undefined).length
+  const stats = { ctx: u.ctx, rate: u.rate, cost: u.cost, tools: t.tools, finished }
+  const subline =
+    running.length > 0
+      ? `${running.length} helper${running.length > 1 ? 's' : ''} working`
+      : `Session ${md.sessions}`
+  const agentRows = shown.map(a => ({
+    color: modelColor(a.model),
+    head: `● ${modelName(a.model)} · ${a.type}`,
+    body: `${cut(a.desc, 40)} — ${a.detail} · ${a.tools} tool${a.tools === 1 ? '' : 's'} · ${clock((a.endedAt ?? now) - a.startedAt)}`,
+    isDone: a.endedAt !== undefined,
+  }))
+  const timer =
+    t.isWorking && t.startedAt !== undefined ? `Working for ${clock(now - t.startedAt)}` : undefined
+
+  return { m, u, t, shown, planInfo, stats, subline, agentRows, timer, isSweating: (u.ctx ?? 0) >= 80 }
+}
+
+async function openPane($: EngineInterface) {
+  const opened = await $.ui.open({ id: PANE, title: 'Critter', backgroundColor: 'transparent' })
+  await update($, paneOpen, () => opened.isPlaced)
+  return opened
+}
+
 export const register: Register = on => {
   let warnedContext = false
+  let usesPane = false
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -212,6 +261,11 @@ export const register: Register = on => {
     const current = await read($, main)
     if (current.at === 0) await setMain($, 'idle', idleLine(m))
     $.clock.every(1000, () => void onTick($))
+    usesPane = e.surface !== 'terminal'
+    if (usesPane && !(await read($, isHidden))) {
+      // Unplaced or refused, the band above the prompt draws the critter instead.
+      openPane($).catch(() => undefined)
+    }
 
     return next(e)
   })
@@ -219,6 +273,10 @@ export const register: Register = on => {
   on('command.run', { command: 'critter' }, async $ => {
     const hidden = await read($, isHidden)
     await update($, isHidden, () => !hidden)
+    if (usesPane) {
+      if (hidden) await openPane($)
+      else await $.ui.close({ id: PANE })
+    }
 
     return { text: hidden ? 'Critter is back.' : 'Critter hidden. Run /critter to bring it back.' }
   })
@@ -329,52 +387,56 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    await update($, paneOpen, () => false)
+    if (e.origin.kind === 'person') await update($, isHidden, () => true)
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { m, shown, planInfo, stats, subline, agentRows, timer, isSweating } = await hudModel($)
+    if (e.surface === 'terminal') {
+      const { Text } = $.ui.resolve(e)
+      return <Text>{face(m.action)} {m.detail}</Text>
+    }
+    const { Box, Text, Svg } = $.ui.resolve(e)
+    const svg = sceneTall({
+      action: m.action,
+      bubble: m.detail || 'Hi!',
+      subline,
+      agents: shown,
+      extra: Math.max(0, shown.length - 8),
+      isSweating,
+      plan: planInfo,
+      stats,
+    })
+
+    return (
+      <Box flexDirection="column" gap={0}>
+        <Svg source={svg} alt={`Critter: ${m.detail || 'idle'}`} />
+        {timer !== undefined && (
+          <Text dimColor size="footnote">
+            {timer}
+          </Text>
+        )}
+        {agentRows.map(r => (
+          <Text size="footnote" dimColor={r.isDone}>
+            <Text color={r.color} weight="medium">
+              {r.head}
+            </Text>{' '}
+            {r.body}
+          </Text>
+        ))}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, isHidden))) return next(e)
+    if (e.surface !== 'terminal' && (await read($, paneOpen))) return next(e)
 
-    const m = await read($, main)
-    const list = await read($, agents)
-    const u = await read($, usage)
-    const t = await read($, turn)
-    const md = await read($, mood)
-    const items = await read($, plan)
-    const now = Math.max(await read($, tick), m.at)
-    const planInfo =
-      items.length > 0
-        ? {
-            done: items.filter(it => it.status === 'completed').length,
-            total: items.length,
-            current: items.find(it => it.status === 'in_progress')?.content ?? '',
-          }
-        : undefined
-
-    const running = list.filter(a => a.endedAt === undefined)
-    const recent = list.filter(a => a.endedAt !== undefined && now - a.endedAt < KEEP_FINISHED_MS)
-    const shown = [...running, ...recent]
-    const finished = list.filter(a => a.endedAt !== undefined).length
-    const isSweating = (u.ctx ?? 0) >= 80
-
-    const stats = {
-      ctx: u.ctx,
-      rate: u.rate,
-      cost: u.cost,
-      tools: t.tools,
-      finished,
-    }
-
-    const subline =
-      running.length > 0
-        ? `${running.length} helper${running.length > 1 ? 's' : ''} working`
-        : `Session ${md.sessions}`
-
-    const agentRows = shown.map(a => ({
-      color: modelColor(a.model),
-      head: `● ${modelName(a.model)} · ${a.type}`,
-      body: `${cut(a.desc, 40)} — ${a.detail} · ${a.tools} tool${a.tools === 1 ? '' : 's'} · ${clock((a.endedAt ?? now) - a.startedAt)}`,
-      isDone: a.endedAt !== undefined,
-    }))
-    const timer =
-      t.isWorking && t.startedAt !== undefined ? `Working for ${clock(now - t.startedAt)}` : undefined
+    const { m, u, t, shown, planInfo, stats, subline, agentRows, timer, isSweating } = await hudModel($)
 
     if (e.surface === 'terminal') {
       const { Box, Text } = $.ui.resolve(e)

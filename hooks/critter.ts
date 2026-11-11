@@ -38,9 +38,10 @@ const STYLE = `<style>
 .s{font:400 11px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;fill:#6b675f}
 .bub{fill:#ffffff;stroke:#d9d5cc}
 .track{fill:#e6e2d9}
+.bubfill{fill:#ffffff}
 .v{font:500 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#3d3929}
 .rule{stroke:#e6e2d9}
-@media (prefers-color-scheme:dark){.v{fill:#ece9e2}.rule{stroke:#3a3934}.t{fill:#ece9e2}.s{fill:#a8a49b}.bub{fill:#2b2a27;stroke:#4a4842}.track{fill:#3a3934}}
+@media (prefers-color-scheme:dark){.bubfill{fill:#2b2a27}.v{fill:#ece9e2}.rule{stroke:#3a3934}.t{fill:#ece9e2}.s{fill:#a8a49b}.bub{fill:#2b2a27;stroke:#4a4842}.track{fill:#3a3934}}
 .blink{transform-box:fill-box;transform-origin:center;animation:blink 4s infinite}
 .look{animation:look 2.6s ease-in-out infinite}
 .scan{animation:scan 1.1s ease-in-out infinite}
@@ -226,6 +227,85 @@ export function scene(s: SceneInput): string {
       : ''
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${STYLE}<g transform="translate(18 34) scale(2.2)">${critter(s.action, CORAL, s.isSweating)}</g>${bubble}${minis}${more}${strip}</svg>`
+}
+
+function miniAgent(a: AgentView, i: number, x: number, y: number, barW: number): string {
+  const color = modelColor(a.model)
+  const isDone = a.endedAt !== undefined
+  const action: Action = isDone ? (a.failed ? 'error' : 'done') : a.action
+  const fill = isDone
+    ? `<rect x="0" y="0" width="${barW}" height="3" rx="1.5" fill="${a.failed ? '#D9534F' : '#5CB85C'}"/>`
+    : `<clipPath id="t${i}"><rect x="0" y="0" width="${barW}" height="3" rx="1.5"/></clipPath><g clip-path="url(#t${i})"><rect class="shimmer" x="0" y="0" width="12" height="3" rx="1.5" fill="${color}"/></g>`
+  return `<g opacity="${isDone ? 0.6 : 1}"><g transform="translate(${x + 8} ${y + 14}) scale(.8)">${critter(action, color)}</g><text class="s" x="${x + 24}" y="${y + 62}" text-anchor="middle">${esc(modelName(a.model))}</text><g transform="translate(${x + 4} ${y + 70})"><rect class="track" x="0" y="0" width="${barW}" height="3" rx="1.5"/>${fill}</g></g>`
+}
+
+/** The side pane: the same scene stacked for a narrow column. */
+export function sceneTall(s: SceneInput): string {
+  const width = 320
+  const parts: string[] = []
+  parts.push(`<g transform="translate(26 42) scale(2.4)">${critter(s.action, CORAL, s.isSweating)}</g>`)
+
+  const text = cut(s.bubble, 36)
+  parts.push(
+    `<path d="M58 125l12-12 12 12z" class="bub"/><rect x="10" y="124" width="300" height="38" rx="12" class="bub"/><rect x="59" y="122" width="22" height="4" class="bubfill"/><text class="t" x="24" y="148">${esc(text)}</text>`,
+  )
+  let y = 186
+  if (s.plan !== undefined && s.plan.total > 0) {
+    const w = 296
+    const f = Math.max(6, Math.round((s.plan.done / s.plan.total) * w))
+    parts.push(
+      `<text class="s" x="12" y="${y}">Plan ${s.plan.done}/${s.plan.total}${s.plan.current ? ' · ' + esc(cut(s.plan.current, 40)) : ''}</text>`,
+      `<rect class="track" x="12" y="${y + 8}" width="${w}" height="7" rx="3.5"/><rect x="12" y="${y + 8}" width="${f}" height="7" rx="3.5" fill="${CORAL}"/>`,
+    )
+    y += 32
+  } else {
+    parts.push(`<text class="s" x="12" y="${y}">${esc(cut(s.subline, 50))}</text>`)
+    y += 18
+  }
+
+  if (s.agents.length > 0) {
+    y += 8
+    parts.push(`<text class="s" x="12" y="${y}">Helpers</text>`)
+    s.agents.slice(0, 8).forEach((a, i) => {
+      const col = i % 4
+      const row = Math.floor(i / 4)
+      parts.push(miniAgent(a, i, 8 + col * 76, y + 4 + row * 84, 40))
+    })
+    y += 4 + Math.ceil(Math.min(8, s.agents.length) / 4) * 84
+    if (s.extra > 4) parts.push(`<text class="s" x="300" y="${y - 10}" text-anchor="end">+${s.extra - 4}</text>`)
+  }
+
+  const st = s.stats
+  if (st !== undefined) {
+    const rows: string[] = []
+    let ry = y + 30
+    const meter = (label: string, pct: number) => {
+      const w = 176
+      const f = Math.max(4, Math.round((Math.min(100, pct) / 100) * w))
+      rows.push(
+        `<text class="s" x="12" y="${ry}">${label}</text>`,
+        `<rect class="track" x="72" y="${ry - 7}" width="${w}" height="7" rx="3.5"/><rect x="72" y="${ry - 7}" width="${f}" height="7" rx="3.5" fill="${level(pct)}"/>`,
+        `<text class="v" x="308" y="${ry}" text-anchor="end">${Math.round(pct)}%</text>`,
+      )
+      ry += 22
+    }
+    if (st.ctx !== undefined) meter('Context', st.ctx)
+    if (st.rate !== undefined) meter('Limit', st.rate)
+    const chips: string[] = []
+    if (st.cost !== undefined) chips.push(`$${st.cost.toFixed(2)}`)
+    if (st.tools > 0) chips.push(`${st.tools} tool${st.tools === 1 ? '' : 's'} this turn`)
+    if (st.finished > 0) chips.push(`${st.finished} helper${st.finished === 1 ? '' : 's'} done`)
+    if (chips.length > 0) {
+      rows.push(`<text class="s" x="12" y="${ry}">${esc(chips.join('  ·  '))}</text>`)
+      ry += 22
+    }
+    if (rows.length > 0) {
+      parts.push(`<line x1="12" y1="${y + 10}" x2="308" y2="${y + 10}" class="rule"/>`, ...rows)
+      y = ry - 8
+    }
+  }
+  const height = y + 12
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${STYLE}${parts.join('')}</svg>`
 }
 
 const FACES: Record<Action, string> = {

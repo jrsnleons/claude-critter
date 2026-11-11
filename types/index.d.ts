@@ -45,6 +45,7 @@ declare module 'claude-code' {
       tick: number
       isHidden: boolean
       plan: Shaped<PlanItem[]>
+      paneOpen: boolean
     }
   }
 }

@@ -1,6 +1,6 @@
 # critter-hud
 
-A Claude Code mod that puts a little pixel critter above your prompt. It acts out whatever Claude is doing, and gives every subagent its own mini critter.
+A Claude Code mod that gives you a little pixel critter in a transparent side pane. It acts out whatever Claude is doing, and gives every subagent its own mini critter.
 
 ## What it shows
 
@@ -10,9 +10,9 @@ A Claude Code mod that puts a little pixel critter above your prompt. It acts ou
 - **Stats strip**: context and usage-limit bars that turn amber then red, session cost, and tool calls this turn.
 - **Mood across sessions**: it remembers how many tasks you've finished together.
 
-In the desktop app it's an animated drawing. In the terminal it's a text face, like `(o_o) [≡]` while reading.
+In the desktop app it's an animated drawing in a side pane titled Critter, with no background of its own, so it floats over the app. If the app can't place the pane, it draws in the band above the prompt instead. In the terminal it's a text face above the prompt, like `(o_o) [≡]` while reading.
 
-`/critter` hides or shows it.
+`/critter` hides or shows it. Closing the pane hides it too.
 
 ## Install
 
